@@ -1,1 +1,3 @@
-howdy world! yahoo
+The Selenium guy seem to have abandoned SeleniumAntTask in version 1.3 - and I can't find out why. Maybe they're all huge maven heads or something.
+
+Anyway, here it is for your ant-ing pleasure. There are a few changes I've made too that make it a bit more useful.
