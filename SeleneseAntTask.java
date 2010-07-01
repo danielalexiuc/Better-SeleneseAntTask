@@ -18,7 +18,7 @@ import org.openqa.selenium.server.htmlrunner.*;
  * &nbsp;&nbsp;&nbsp;&nbsp;&lt;/classpath&gt;<br/>
  * &lt;/taskdef&gt;<br/>
  * &lt;selenese&nbsp;<br/>
- * &nbsp;&nbsp;&nbsp;&nbsp;suite="c:\absolute\path\to\my\HTMLSuite.html"<br/>
+ * &nbsp;&nbsp;&nbsp;&nbsp;suiteDirectory="c:\absolute\path\to\my\suiteDirectory"<br/>
  * &nbsp;&nbsp;&nbsp;&nbsp;browser="*firefox"<br/>
  * &nbsp;&nbsp;&nbsp;&nbsp;results="c:\absolute\path\to\my\results.html"<br/>
  * &nbsp;&nbsp;&nbsp;&nbsp;multiWindow="true"<br/>
@@ -34,9 +34,9 @@ import org.openqa.selenium.server.htmlrunner.*;
  *     <td align="center" valign="top"><b>Required</b></td>
  *   </tr>
  *   <tr>
- *     <td valign="top">suite</td>
+ *     <td valign="top">suiteDirectory</td>
  *
- *     <td valign="top">The suite file to run.  (Note that you cannot run a single test with this Ant task.)</td>
+ *     <td valign="top">The directory containing all of the test suite files to run.</td>
  *     <td align="center" valign="top">Yes</td>
  *   </tr>
  *   <tr>
@@ -96,6 +96,11 @@ import org.openqa.selenium.server.htmlrunner.*;
  *     <td valign="top">A debugging tool that slows down the Selenium Server.  (Selenium developers only)</td>
  *     <td align="center" valign="top">No, defaults to false</td>
  *   </tr>
+ *   <tr>
+ *     <td valign="top">firefoxProfileTemplate</td>
+ *     <td valign="top">The name of the firefox template that Selenium should use</td>
+ *     <td align="center" valign="top">No</td>
+ *   </tr>
  * </table>
  *
  * TODO: more options! fork=true? singleTest?
@@ -105,16 +110,17 @@ import org.openqa.selenium.server.htmlrunner.*;
 public class SeleneseAntTask extends Task {
 
 	private static final String SELENIUM_JAVASCRIPT_DIR = "selenium.javascript.dir";
-	private int port = RemoteControlConfiguration.DEFAULT_PORT;
-	private int timeoutInSeconds = RemoteControlConfiguration.DEFAULT_TIMEOUT_IN_SECONDS;
-	private boolean slowResources, multiWindow;
-	private String browser, startURL;
-	private File suite, results, outputDir;
-	private boolean haltOnFailure=true;
-	private String failureProperty;
+    private static final Pattern browserPattern = Pattern.compile("\\*(\\w+)");
+    private static final String PASSED = "PASSED";
 
-	private static final Pattern browserPattern = Pattern.compile("\\*(\\w+)");
+    private int timeoutInSeconds = RemoteControlConfiguration.DEFAULT_TIMEOUT_IN_SECONDS;
+    private int port = RemoteControlConfiguration.DEFAULT_PORT;
+    private File results, outputDir, suiteDirectory;
+    private boolean slowResources, multiWindow;
+    private boolean haltOnFailure=true;
     private File firefoxProfileTemplate;
+    private String browser, startURL;
+    private String failureProperty;
 
     public SeleneseAntTask() {
 		super();
@@ -122,42 +128,58 @@ public class SeleneseAntTask extends Task {
 
 	@Override
 	public void execute() {
-		checkForNulls();
-		checkResultsFile();
-		checkForJavaScriptCoreDir();
+        checkEnvironment();
 		SeleniumServer server = null;
 		try {
             RemoteControlConfiguration configuration = new RemoteControlConfiguration();
             configuration.setFirefoxProfileTemplate(firefoxProfileTemplate);
+            configuration.setPort(port);
             server = new SeleniumServer(slowResources, configuration);
 			server.start();
-			HTMLLauncher launcher = new HTMLLauncher(server);
-			String result = launcher.runHTMLSuite(browser, startURL, suite, results, timeoutInSeconds, multiWindow);
-			server.stop();
-			if (!"PASSED".equals(result)) {
-
-			    String errorMessage = "Tests failed, see result file for details: " + results.getAbsolutePath();
-				if(haltOnFailure)
-				{
-					throw new BuildException(errorMessage);
-				}
-				log(errorMessage, Project.MSG_ERR);
-				if (failureProperty != null) {
-				    getProject().setProperty(failureProperty, "true");
-				}
-
-			}
-
-
-
-
+            runTestSuites(server);
 		} catch (Exception e) {
-			if (server != null) server.stop();
 			throw new BuildException(e);
-		}
+		} finally {
+            if (server != null) server.stop();
+        }
 	}
 
-	private void checkForJavaScriptCoreDir() {
+    private void checkEnvironment() {
+        checkForNulls();
+        checkResultsFile();
+        checkForJavaScriptCoreDir();
+    }
+
+    private void runTestSuites(SeleniumServer server) throws IOException {
+        log("Test Suite Directory: " + suiteDirectory.getAbsolutePath());
+        for (File suite : suiteDirectory.listFiles()) {
+            if(suite.getName().endsWith(".html")){
+                runTestSuite(server, suite);
+            }
+        }
+    }
+
+    private void runTestSuite(SeleniumServer server, File suite) throws IOException {
+        log("Running Test Suite: " + suite.getName());
+        HTMLLauncher launcher = new HTMLLauncher(server);
+        String result = launcher.runHTMLSuite(browser, startURL, suite, results, timeoutInSeconds, multiWindow);
+        checkResult(result);
+    }
+
+    private void checkResult(String result) {
+        if (!PASSED.equals(result)) {
+            String errorMessage = "Tests failed, see result file for details: " + results.getAbsolutePath();
+            if(haltOnFailure) {
+                throw new BuildException(errorMessage);
+            }
+            log(errorMessage, Project.MSG_ERR);
+            if (failureProperty != null) {
+                getProject().setProperty(failureProperty, "true");
+            }
+        }
+    }
+
+    private void checkForJavaScriptCoreDir() {
 		// Ant puts its properties in the project, not in the system
 		if (System.getProperties().containsKey(SELENIUM_JAVASCRIPT_DIR)) return;
 		String antProperty = getProject().getProperty(SELENIUM_JAVASCRIPT_DIR);
@@ -173,15 +195,15 @@ public class SeleneseAntTask extends Task {
 		if (startURL == null) {
 			throw new BuildException("You must specify a start URL");
 		}
-		if (suite == null) {
-			throw new BuildException("You must specify a suite file");
+		if (suiteDirectory == null) {
+			throw new BuildException("You must specify a suite directory");
 		}
 		if (outputDir == null) {
 		    outputDir = getProject().getBaseDir();
 		}
 		if (results == null) {
 			String options = (multiWindow ? "multiWindow-" : "") + (slowResources ? "slowResources-" : "");
-			String name = "results-" + extractUsableBrowserName() + '-' + options + suite.getName();
+			String name = "results-" + extractUsableBrowserName() + '-' + options + suiteDirectory.getName();
 			setResults(new File(name));
 		}
 	}
@@ -232,12 +254,6 @@ public class SeleneseAntTask extends Task {
 		this.startURL = u.toString();
 	}
 
-	public void setSuite(File suite) {
-		if (!suite.exists()) throw new BuildException("suite doesn't exist: " + suite.getAbsolutePath());
-		if (!suite.canRead()) throw new BuildException("can't read suite file: " + suite.getAbsolutePath());
-		this.suite = suite;
-	}
-
 	public void setTimeoutInSeconds(int timeoutInSeconds) {
 		this.timeoutInSeconds = timeoutInSeconds;
 	}
@@ -263,5 +279,11 @@ public class SeleneseAntTask extends Task {
 
     public void setFirefoxProfileTemplate(File firefoxProfileTemplate) {
         this.firefoxProfileTemplate = firefoxProfileTemplate;
+    }
+
+    public void setSuiteDirectory(File suiteDirectory) {
+        if (!suiteDirectory.exists()) throw new BuildException("suite directory doesn't exist: " + suiteDirectory.getAbsolutePath());
+		if (!suiteDirectory.canRead()) throw new BuildException("can't read suite file: " + suiteDirectory.getAbsolutePath());
+        this.suiteDirectory = suiteDirectory;
     }
 }
