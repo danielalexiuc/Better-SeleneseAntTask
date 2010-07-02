@@ -1,5 +1,3 @@
-package au.gov.qld.des.oms.uitest;
-
 import java.io.*;
 import java.net.*;
 import java.util.regex.*;
