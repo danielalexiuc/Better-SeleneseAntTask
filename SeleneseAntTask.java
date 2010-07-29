@@ -99,6 +99,11 @@ import org.openqa.selenium.server.htmlrunner.*;
  *     <td valign="top">The name of the firefox template that Selenium should use</td>
  *     <td align="center" valign="top">No</td>
  *   </tr>
+ *   <tr>
+ *     <td valign="top">userExtensions</td>
+ *     <td valign="top">The file containing Selenium user-extensions</td>
+ *     <td align="center" valign="top">No</td>
+ *   </tr>
  * </table>
  *
  * TODO: more options! fork=true? singleTest?
@@ -113,10 +118,9 @@ public class SeleneseAntTask extends Task {
 
     private int timeoutInSeconds = RemoteControlConfiguration.DEFAULT_TIMEOUT_IN_SECONDS;
     private int port = RemoteControlConfiguration.DEFAULT_PORT;
-    private File results, outputDir, suiteDirectory;
+    private File results, outputDir, suiteDirectory, userExtensions, firefoxProfileTemplate;
     private boolean slowResources, multiWindow;
     private boolean haltOnFailure=true;
-    private File firefoxProfileTemplate;
     private String browser, startURL;
     private String failureProperty;
 
@@ -132,6 +136,8 @@ public class SeleneseAntTask extends Task {
             RemoteControlConfiguration configuration = new RemoteControlConfiguration();
             configuration.setFirefoxProfileTemplate(firefoxProfileTemplate);
             configuration.setPort(port);
+            configuration.setUserExtensions(userExtensions);
+            configuration.setTrustAllSSLCertificates(true);            
             server = new SeleniumServer(slowResources, configuration);
 			server.start();
             runTestSuites(server);
@@ -144,29 +150,29 @@ public class SeleneseAntTask extends Task {
 
     private void checkEnvironment() {
         checkForNulls();
-        checkResultsFile();
         checkForJavaScriptCoreDir();
     }
 
     private void runTestSuites(SeleniumServer server) throws IOException {
         log("Test Suite Directory: " + suiteDirectory.getAbsolutePath());
         for (File suite : suiteDirectory.listFiles()) {
-            if(suite.getName().endsWith(".html")){
-                runTestSuite(server, suite);
+            HTMLLauncher htmlLauncher = new HTMLLauncher(server);
+            if(suite.getName().startsWith("Suite")){
+                runTestSuite(suite, htmlLauncher);
             }
         }
     }
 
-    private void runTestSuite(SeleniumServer server, File suite) throws IOException {
+    private void runTestSuite(File suite, HTMLLauncher launcher) throws IOException {
         log("Running Test Suite: " + suite.getName());
-        HTMLLauncher launcher = new HTMLLauncher(server);
-        String result = launcher.runHTMLSuite(browser, startURL, suite, results, timeoutInSeconds, multiWindow);
-        checkResult(result);
+        File suiteResultsFile = createResultsFile(suite.getName());
+        String result = launcher.runHTMLSuite(browser, startURL, suite, suiteResultsFile, timeoutInSeconds, multiWindow);
+        checkResult(result, suiteResultsFile);
     }
 
-    private void checkResult(String result) {
+    private void checkResult(String result, File suiteResultsFile) {
         if (!PASSED.equals(result)) {
-            String errorMessage = "Tests failed, see result file for details: " + results.getAbsolutePath();
+            String errorMessage = "Tests failed, see result file for details: " + suiteResultsFile.getAbsolutePath();
             if(haltOnFailure) {
                 throw new BuildException(errorMessage);
             }
@@ -231,17 +237,19 @@ public class SeleneseAntTask extends Task {
 
 	}
 
-    private void checkResultsFile() {
-        if (!results.isAbsolute()) {
-            results = new File(outputDir, results.getPath());
+    private File createResultsFile(String suiteName) {
+        File suiteResultsFile = new File(results + "-" +  suiteName);
+        if (!suiteResultsFile.isAbsolute()) {
+            suiteResultsFile = new File(outputDir, suiteResultsFile.getPath());
         }
         try {
-			results.createNewFile();
+			suiteResultsFile.createNewFile();
 		} catch (IOException e) {
-			throw new BuildException("can't write to results file: " + results.getAbsolutePath(), e);
+			throw new BuildException("can't write to results file: " + suiteResultsFile.getAbsolutePath(), e);
 		}
-		if (!results.canWrite()) throw new BuildException("can't write to results file: " + results.getAbsolutePath());
-		log("Results will go to " + results.getAbsolutePath());
+		if (!suiteResultsFile.canWrite()) throw new BuildException("can't write to results file: " + suiteResultsFile.getAbsolutePath());
+		log("Results will go to " + suiteResultsFile.getAbsolutePath());
+        return suiteResultsFile;
     }
 
 	public void setSlowResources(boolean slowResources) {
@@ -276,6 +284,8 @@ public class SeleneseAntTask extends Task {
 
 
     public void setFirefoxProfileTemplate(File firefoxProfileTemplate) {
+        if (!firefoxProfileTemplate.exists()) throw new BuildException("firefoxProfileTemplate doesn't exist: " + firefoxProfileTemplate.getAbsolutePath());
+		if (!firefoxProfileTemplate.canRead()) throw new BuildException("can't read firefoxProfileTemplate: " + firefoxProfileTemplate.getAbsolutePath());
         this.firefoxProfileTemplate = firefoxProfileTemplate;
     }
 
@@ -283,5 +293,11 @@ public class SeleneseAntTask extends Task {
         if (!suiteDirectory.exists()) throw new BuildException("suite directory doesn't exist: " + suiteDirectory.getAbsolutePath());
 		if (!suiteDirectory.canRead()) throw new BuildException("can't read suite file: " + suiteDirectory.getAbsolutePath());
         this.suiteDirectory = suiteDirectory;
+    }
+
+    public void setUserExtensions(File userExtensions) {
+        if (!userExtensions.exists()) throw new BuildException("user extensions file doesn't exist: " + userExtensions.getAbsolutePath());
+		if (!userExtensions.canRead()) throw new BuildException("can't read user extensions file: " + userExtensions.getAbsolutePath());
+        this.userExtensions = userExtensions;
     }
 }
